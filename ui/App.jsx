@@ -9,7 +9,11 @@ const dateLabel = (value) => new Date(`${value}T12:00:00Z`).toLocaleDateString('
 async function api(path, options) {
   const response = await fetch(`/api${path}`, options);
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error ?? 'Unable to complete the request.');
+  if (!response.ok) {
+    const error = new Error(body.error ?? 'Unable to complete the request.');
+    if (body.conflictingBooking) error.conflictingBooking = body.conflictingBooking;
+    throw error;
+  }
   return body;
 }
 
@@ -49,7 +53,12 @@ function BookingForm({ room, date, onBooked }) {
       form.reset();
       onBooked(booking);
     } catch (error) {
-      setError(error.message);
+      const conflict = error.conflictingBooking;
+      if (conflict?.startTime && conflict?.endTime) {
+        setError(`This room is already booked ${timeLabel(conflict.startTime)}–${timeLabel(conflict.endTime)}. Choose a different time.`);
+      } else {
+        setError(error.message);
+      }
     } finally {
       setSaving(false);
     }
