@@ -110,6 +110,45 @@ test('parser errors preserve the JSON error contract', async (t) => {
   assert.deepEqual(await oversized.json(), { error: 'Request body is too large.' });
 });
 
+test('API rejects an overlapping booking with 409 and conflict detail, and does not duplicate the booking', async (t) => {
+  const request = await setup(t);
+  const created = await request('/api/bookings', post(booking));
+  const existing = await created.json();
+  const conflicting = await request('/api/bookings', post({
+    ...booking, title: 'Overlapping meeting', startTime: '2030-06-12T09:30:00Z', endTime: '2030-06-12T10:30:00Z',
+  }));
+  assert.equal(conflicting.status, 409);
+  assert.deepEqual(await conflicting.json(), {
+    error: 'This room is already booked for that time.',
+    conflictingBooking: {
+      title: existing.title, organizer: existing.organizer, startTime: existing.startTime, endTime: existing.endTime,
+    },
+  });
+  const listed = await request('/api/bookings?roomId=cedar&date=2030-06-12');
+  assert.deepEqual(await listed.json(), [existing]);
+});
+
+test('API allows a back-to-back booking with no gap, and a different room at the same time', async (t) => {
+  const request = await setup(t);
+  await request('/api/bookings', post(booking));
+  const backToBack = await request('/api/bookings', post({ ...booking, startTime: booking.endTime, endTime: '2030-06-12T11:00:00Z' }));
+  assert.equal(backToBack.status, 201);
+  const otherRoom = await request('/api/bookings', post({ ...booking, roomId: 'maple' }));
+  assert.equal(otherRoom.status, 201);
+  const listed = await request('/api/bookings?roomId=cedar&date=2030-06-12');
+  assert.equal((await listed.json()).length, 2);
+});
+
+test('a direct API call without a browser hits the same 409 conflict contract', async (t) => {
+  const request = await setup(t);
+  await request('/api/bookings', post(booking));
+  const response = await request('/api/bookings', post(booking));
+  assert.equal(response.status, 409);
+  const body = await response.json();
+  assert.equal(typeof body.error, 'string');
+  assert.equal(body.conflictingBooking.title, booking.title);
+});
+
 test('routes remain case-sensitive, exact, and limited to their supported methods', async (t) => {
   const request = await setup(t);
   assert.equal((await request('/api/Rooms')).status, 404);
